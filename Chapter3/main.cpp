@@ -99,6 +99,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//デバイスがロスとしてしまうので注意
 	EnableDebugLayer();
 #endif
+
+
+
 	//DirectX12まわり初期化
 	//フィーチャレベル列挙
 	D3D_FEATURE_LEVEL levels[] = {
@@ -130,9 +133,22 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		}
 	}
 
+
+	/* dx12初期化のフロー
+		1. デバイス					
+		2. コマンドキュー			
+		3. スワップチェイン			
+		4. コマンドアロケータ		
+		5. コマンドリストー			
+		6. レンダーターゲットビュー	
+		7. フェンス					
+	*/
 	//Direct3Dデバイスの初期化
 	D3D_FEATURE_LEVEL featureLevel;
 	for (auto l : levels) {
+		/////////////////////////////////////////////////
+		// 1. デバイスの生成
+		/////////////////////////////////////////////////
 		if (D3D12CreateDevice(tmpAdapter, l, IID_PPV_ARGS(&dev_)) == S_OK) {
 			featureLevel = l;
 			break;
@@ -143,11 +159,16 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // ※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※
     // ※ コマンドリストとコマンドアロケーターの生成（デバイスやIDXGIFactoryの生成の後に行う）
     // ※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※※
+	///////////////////////////////////////////////////
+	// 4. コマンドアロケータの生成
+	/////////////////////////////////////////////////
 	result = dev_->CreateCommandAllocator ( // (DX12) これで命令のメモリ領域確保
         D3D12_COMMAND_LIST_TYPE_DIRECT,     // _In_         D3D12_COMMAND_LIST_TYPE type
         IID_PPV_ARGS(& cmdAllocator_)       //              REFIID                  riid
     );                                      // _COM_Outptr_ void **                 ppCommandAllocator(IID_PPV_ARGSが展開されてこの引数に渡されている)
-	
+	/////////////////////////////////////////////////
+	// 5. コマンドリストの生成
+	/////////////////////////////////////////////////
     result = dev_->CreateCommandList      ( // (DX12) これに命令を溜めておいて後にコマンドキューで一気に実行する
         0,                                  // _In_         UINT                    nodeMask,
         D3D12_COMMAND_LIST_TYPE_DIRECT,     // _In_         D3D12_COMMAND_LIST_TYPE type,
@@ -164,10 +185,13 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	cmdQueueDesc.NodeMask  = 0;                                                                 // アダプターを１つしか使わないときは０でよい
 	cmdQueueDesc.Priority  = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;                               // プライオリティ特に指定なし
 	cmdQueueDesc.Type      = D3D12_COMMAND_LIST_TYPE_DIRECT;                                    // ここはコマンドリストと合わせてください
+	/////////////////////////////////////////////////
+	// 2. コマンドキューの生成
+	/////////////////////////////////////////////////
 	result                 = dev_->CreateCommandQueue(&cmdQueueDesc, IID_PPV_ARGS(&cmdQueue_)); // コマンドキュー生成
 
-    //コマンドリスト、コマンドアロケータ回りの気になったツイート
-#if 0
+
+#if 0 //コマンドリスト、コマンドアロケータ回りの気になったツイート
     /*
     https://twitter.com/tn_mai/status/781898621276925952
     コマンドアロケータを複数のコマンドリストに関連付けるには、
@@ -200,6 +224,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	swapchainDesc.SwapEffect         = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 	swapchainDesc.AlphaMode          = DXGI_ALPHA_MODE_UNSPECIFIED;
 	swapchainDesc.Flags              = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+	/////////////////////////////////////////////////
+	// 3. スワップチェインの生成
+	/////////////////////////////////////////////////
 	result = dxgiFactory_->CreateSwapChainForHwnd(
         cmdQueue_,                     // /* [annotation][in]  */ _In_           IUnknown*                        pDevice,           コマンドキューオブジェクト
 		hwnd,                          // /* [annotation][in]  */ _In_           HWND                             hWnd,              ウィンドウハンドル
@@ -227,6 +254,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvHeaps->GetCPUDescriptorHandleForHeapStart();      // ディスクリプタヒープ上のビューのアドレスを取得
 	for (size_t i = 0; i < swcDesc.BufferCount; ++i) {
 		result = swapchain_->GetBuffer(static_cast<UINT>(i), IID_PPV_ARGS(&_backBuffers[i])); // スワップチェーン上のバックバッファ取得
+		/////////////////////////////////////////////////
+		// 6. レンダーターゲットビューの生成
+		/////////////////////////////////////////////////
 		dev_->CreateRenderTargetView(_backBuffers[i], nullptr, handle);                       // RTV生成。バックバッファとディスクリプタが関連付けられる
 		handle.ptr += dev_->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV); // ディスクリプタ内のメモリ領域はビューなどによってずらすメモリ幅が違うためこの関数でその幅を取得してずらす。
                                                                                               // 今回はレンダーターゲットビューを表すD3D12_DESCRIPTOR_HEAP_TYPE_RTVを引数に渡す
@@ -235,6 +265,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     // コマンドリストの全ての命令を待つオブジェクト
 	ID3D12Fence* _fence = nullptr;
 	UINT64 _fenceVal    = 0;
+	/////////////////////////////////////////////////
+	// 7. フェンスの生成
+	/////////////////////////////////////////////////
 	result              = dev_->CreateFence(
         _fenceVal,             //              UINT64            InitialValue,
         D3D12_FENCE_FLAG_NONE, //              D3D12_FENCE_FLAGS Flags,
